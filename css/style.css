@@ -1,0 +1,181 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #0a0a14;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #fff;
+  user-select: none;
+}
+
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+.hidden { display: none !important; }
+
+/* ---------- Webcam mini preview ---------- */
+#camBox {
+  position: fixed; top: 14px; right: 14px;
+  width: 240px; z-index: 30;
+  border-radius: 12px; overflow: hidden;
+  border: 2px solid rgba(255,255,255,.25);
+  box-shadow: 0 6px 24px rgba(0,0,0,.55);
+  background: #000;
+}
+#video { display: none; }
+#camCanvas { width: 100%; display: block; transform: scaleX(-1); }
+#handStatus {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 4px 8px; font-size: 13px; font-weight: 600;
+  background: rgba(0,0,0,.55); text-align: center;
+}
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+.hud-left { position: absolute; top: 16px; left: 20px; }
+#score { font-size: 46px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 2px 12px rgba(0,0,0,.7); }
+#best  { font-size: 15px; font-weight: 600; opacity: .75; letter-spacing: 3px; }
+.hud-right { position: absolute; bottom: 22px; right: 24px; text-align: right; }
+#speed { font-size: 54px; font-weight: 800; font-style: italic; text-shadow: 0 0 18px rgba(24,194,255,.8); }
+.kmh { font-size: 14px; letter-spacing: 4px; opacity: .8; }
+#combo {
+  position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
+  font-size: 34px; font-weight: 800; font-style: italic;
+  color: #ffd10a; text-shadow: 0 0 20px rgba(255,209,10,.9);
+  opacity: 0; transition: opacity .15s;
+}
+#combo.show { opacity: 1; }
+
+/* ---------- Steering wheel indicator ---------- */
+#wheelBox {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  width: 92px; height: 92px; z-index: 20; opacity: .85; pointer-events: none;
+}
+#wheelSvg { width: 100%; height: 100%; filter: drop-shadow(0 3px 10px rgba(0,0,0,.6)); transition: transform .06s linear; }
+
+/* ---------- Overlays ---------- */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; text-align: center;
+  background: radial-gradient(ellipse at 50% 30%, rgba(30,30,70,.92), rgba(5,5,15,.97));
+  backdrop-filter: blur(6px);
+}
+/* Menu: transparent over the live 3D scene — card pinned left, the player's car
+   is showcased on the right (orbiting camera), so color picks are visible live. */
+#menu {
+  align-items: flex-start;
+  padding-left: 6vw;
+  background: linear-gradient(100deg,
+    rgba(8,5,20,.60) 0%, rgba(8,5,20,.38) 40%,
+    rgba(10,6,24,.06) 68%, rgba(10,6,24,.30) 100%);
+  backdrop-filter: none;
+}
+@media (max-width: 980px) {
+  #menu { align-items: center; padding-left: 0; } /* small screens: card centered */
+}
+#menu .tagline, #menu .menu-section h3, #menu .hint, #menu .copyright {
+  text-shadow: 0 2px 10px rgba(0,0,0,.9), 0 0 4px rgba(0,0,0,.7);
+}
+/* ---------- Menu card (glass panel over the live 3D scene) ---------- */
+.menu-card {
+  width: min(92vw, 560px);
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 30px 36px 26px;
+  background: rgba(10, 8, 24, .58);
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 22px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(14px) saturate(1.25);
+}
+.logo {
+  font-size: clamp(38px, 6vw, 60px); font-weight: 900; font-style: italic; letter-spacing: 3px;
+  background: linear-gradient(90deg, #ff2d2d, #ffd10a, #18c2ff);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 4px 24px rgba(255,45,45,.35));
+}
+.logo span { -webkit-text-stroke: 2px rgba(255,255,255,.85); color: transparent; background: none; }
+.tagline { font-size: 14px; opacity: .75; letter-spacing: 1px; margin-top: -8px; }
+.menu-best {
+  font-size: 12px; font-weight: 700; letter-spacing: 3px; color: #ffd10a;
+  padding: 5px 16px; border-radius: 999px;
+  background: rgba(255,209,10,.08); border: 1px solid rgba(255,209,10,.3);
+}
+
+.menu-section { width: 100%; }
+.menu-section h3 {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 11px; letter-spacing: 4px; opacity: .55; margin-bottom: 10px; font-weight: 600;
+}
+.menu-section h3::before, .menu-section h3::after {
+  content: ''; height: 1px; flex: 1;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.3));
+}
+.menu-section h3::after { background: linear-gradient(90deg, rgba(255,255,255,.3), transparent); }
+
+/* Car swatches */
+.pick-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); gap: 7px; }
+.pick {
+  --c: #888;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 11px 6px; border-radius: 11px; cursor: pointer;
+  background: rgba(255,255,255,.05); color: rgba(255,255,255,.85);
+  border: 1.5px solid rgba(255,255,255,.13);
+  font-weight: 700; font-size: 11px; letter-spacing: .5px;
+  transition: all .15s;
+}
+.pick i {
+  width: 13px; height: 13px; border-radius: 50%; flex: none;
+  background: var(--c); box-shadow: 0 0 8px var(--c);
+}
+.pick:hover { background: rgba(255,255,255,.12); transform: translateY(-1px); }
+.pick.sel {
+  border-color: var(--c); color: #fff; background: rgba(255,255,255,.09);
+  box-shadow: 0 0 16px -4px var(--c), inset 0 0 12px -6px var(--c);
+}
+
+/* Segmented control toggle */
+.seg {
+  display: flex; gap: 4px; padding: 4px; width: 100%;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.13); border-radius: 13px;
+}
+.seg .pick { flex: 1; border: none; background: transparent; padding: 12px 8px; font-size: 12px; letter-spacing: 1px; border-radius: 9px; }
+.seg .pick:hover { background: rgba(255,255,255,.09); transform: none; }
+.seg .pick.sel {
+  background: linear-gradient(90deg, #18c2ff, #3a7bff); color: #04101c;
+  box-shadow: 0 2px 16px rgba(24,194,255,.45);
+}
+
+.hint {
+  font-size: 12.5px; opacity: .8; margin-top: 10px; line-height: 1.7;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px; padding: 10px 14px; text-align: center;
+}
+
+.big-btn {
+  margin-top: 4px; width: 100%; padding: 16px 0; border: none; border-radius: 14px; cursor: pointer;
+  font-size: 20px; font-weight: 900; letter-spacing: 3px; font-style: italic;
+  color: #101018; background: linear-gradient(90deg, #ffd10a, #ff9d0a);
+  box-shadow: 0 8px 30px rgba(255,190,10,.4);
+  transition: transform .12s, box-shadow .12s;
+}
+.big-btn:hover { transform: scale(1.03); box-shadow: 0 10px 40px rgba(255,190,10,.6); }
+/* Game-over screen has no card — keep its button compact */
+.overlay > .big-btn { width: auto; padding: 16px 54px; }
+.ghost-btn {
+  padding: 10px 30px; border-radius: 10px; cursor: pointer;
+  background: transparent; color: #fff; border: 2px solid rgba(255,255,255,.4);
+  font-size: 14px; font-weight: 700; letter-spacing: 2px;
+}
+.ghost-btn:hover { background: rgba(255,255,255,.12); }
+.cam-msg { font-size: 14px; color: #ffd10a; min-height: 20px; }
+.copyright { font-size: 12px; opacity: .45; letter-spacing: 2px; margin-top: 6px; }
+
+/* ---------- Game over ---------- */
+.crash-title {
+  font-size: clamp(50px, 9vw, 90px); font-weight: 900; font-style: italic;
+  color: #ff2d2d; text-shadow: 0 0 40px rgba(255,45,45,.7); letter-spacing: 5px;
+}
+.final-score { font-size: 64px; font-weight: 800; }
+.new-best { font-size: 22px; font-weight: 800; color: #ffd10a; text-shadow: 0 0 18px rgba(255,209,10,.9); }

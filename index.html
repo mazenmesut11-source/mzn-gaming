@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MZN GAMING — Drive With Your Hand</title>
+<link rel="stylesheet" href="css/style.css" />
+<!-- MediaPipe Hands (hand tracking) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Webcam preview (mini) -->
+  <div id="camBox" class="hidden">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="camCanvas" width="240" height="180"></canvas>
+    <div id="handStatus">✋ …</div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-left">
+      <div id="score">0</div>
+      <div id="best">BEST 0</div>
+    </div>
+    <div class="hud-right">
+      <div id="speed">0</div>
+      <div class="kmh">km/h</div>
+    </div>
+    <div id="combo"></div>
+  </div>
+
+  <!-- Steering wheel indicator -->
+  <div id="wheelBox" class="hidden">
+    <svg id="wheelSvg" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="7"/>
+      <line x1="6" y1="50" x2="94" y2="50" stroke="rgba(255,255,255,.85)" stroke-width="7"/>
+      <line x1="50" y1="50" x2="50" y2="94" stroke="rgba(255,255,255,.85)" stroke-width="7"/>
+      <circle cx="50" cy="50" r="10" fill="rgba(255,255,255,.9)"/>
+    </svg>
+  </div>
+
+  <!-- MAIN MENU -->
+  <div id="menu" class="overlay">
+    <div class="menu-card">
+      <h1 class="logo">MZN<span>GAMING</span></h1>
+      <p class="tagline">Steer with your hand. Dodge the traffic. Survive.</p>
+      <div class="menu-best">★ BEST SCORE&nbsp; <span id="menuBest">0</span></div>
+
+      <div class="menu-section">
+        <h3>SELECT YOUR CAR</h3>
+        <div id="carPick" class="pick-row">
+          <button class="pick sel" data-color="#ff2d2d" style="--c:#ff2d2d"><i></i>INFERNO</button>
+          <button class="pick" data-color="#18c2ff" style="--c:#18c2ff"><i></i>GLACIER</button>
+          <button class="pick" data-color="#ffd10a" style="--c:#ffd10a"><i></i>VESPA GOLD</button>
+          <button class="pick" data-color="#b02dff" style="--c:#b02dff"><i></i>VIOLET STORM</button>
+          <button class="pick" data-color="#2dff6e" style="--c:#2dff6e"><i></i>VENOM</button>
+        </div>
+      </div>
+
+      <div class="menu-section">
+        <h3>CONTROLS</h3>
+        <div class="seg">
+          <button id="modeHand" class="pick mode sel">🖐 HAND — CAMERA</button>
+          <button id="modeKeys" class="pick mode">⌨ KEYBOARD</button>
+        </div>
+        <p id="controlHint" class="hint">
+          Hold your hand up like a steering wheel — tilt it to steer.<br/>
+          ✊ Close your fist to BRAKE. 🖐 Open hand = full speed.
+        </p>
+      </div>
+
+      <button id="playBtn" class="big-btn">START ENGINE</button>
+      <p id="camMsg" class="cam-msg"></p>
+    </div>
+    <p class="copyright">© 2026 MZN GAMING — All rights reserved</p>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="gameover" class="overlay hidden">
+    <h1 class="crash-title">CRASHED!</h1>
+    <div class="final-score" id="finalScore">0</div>
+    <div id="newBest" class="new-best hidden">★ NEW RECORD ★</div>
+    <button id="retryBtn" class="big-btn">DRIVE AGAIN</button>
+    <button id="menuBtn" class="ghost-btn">MENU</button>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
