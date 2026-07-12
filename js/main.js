@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildSupercar, randomTrafficCar } from './cars.js';
 import { HandControl } from './hand.js';
 
@@ -17,7 +18,7 @@ const scoreEl = $('score'), bestEl = $('best'), speedEl = $('speed'), comboEl = 
 
 /* ================= RENDERER / SCENE ================= */
 const renderer = new THREE.WebGLRenderer({ canvas: $('game'), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); // full sharpness — perf comes from merged draw calls instead
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -114,22 +115,33 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.set(0, -0.02, -200);
 scene.add(ground);
 
-// Lane dashes (recycled)
-const dashes = [];
+// Lane dashes + edge studs — merged into just 2 meshes. The layout repeats every
+// 9 units, so the whole group scrolls and wraps by one period: same look, ~2 draw calls.
+const stripeGroup = new THREE.Group();
 {
-  const dashGeo = new THREE.PlaneGeometry(0.22, 3);
-  const dashMat = new THREE.MeshBasicMaterial({ color: 0xcfcfd8 });
+  const dashGeos = [], studGeos = [];
   for (const x of [-3.5, 0, 3.5]) {
-    for (let z = 10; z > -400; z -= 9) {
-      const d = new THREE.Mesh(dashGeo, dashMat);
-      d.rotation.x = -Math.PI / 2;
-      d.position.set(x, 0.01, z);
-      scene.add(d);
-      dashes.push(d);
+    for (let z = 18; z > -420; z -= 9) {
+      const g = new THREE.PlaneGeometry(0.22, 3);
+      g.rotateX(-Math.PI / 2);
+      g.translate(x, 0.01, z);
+      dashGeos.push(g);
     }
   }
+  for (const x of [-ROAD_W / 2 - 0.6, ROAD_W / 2 + 0.6]) {
+    for (let z = 18; z > -420; z -= 9) {
+      const g = new THREE.SphereGeometry(0.16, 6, 6);
+      g.translate(x, 0.12, z);
+      studGeos.push(g);
+    }
+  }
+  stripeGroup.add(
+    new THREE.Mesh(mergeGeometries(dashGeos), new THREE.MeshBasicMaterial({ color: 0xcfcfd8 })),
+    new THREE.Mesh(mergeGeometries(studGeos), new THREE.MeshBasicMaterial({ color: 0xffe04a }))
+  );
+  scene.add(stripeGroup);
 }
-// Edge lines + glowing yellow road studs (like the key art)
+// Edge lines (static)
 for (const x of [-ROAD_W / 2 + 0.3, ROAD_W / 2 - 0.3]) {
   const line = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 600),
     new THREE.MeshBasicMaterial({ color: 0xffd10a, transparent: true, opacity: 0.55 }));
@@ -137,21 +149,9 @@ for (const x of [-ROAD_W / 2 + 0.3, ROAD_W / 2 - 0.3]) {
   line.position.set(x, 0.01, -200);
   scene.add(line);
 }
-{
-  const studGeo = new THREE.SphereGeometry(0.16, 8, 8);
-  const studMat = new THREE.MeshBasicMaterial({ color: 0xffe04a });
-  for (const x of [-ROAD_W / 2 - 0.6, ROAD_W / 2 + 0.6]) {
-    for (let z = 10; z > -400; z -= 9) {
-      const s = new THREE.Mesh(studGeo, studMat);
-      s.position.set(x, 0.12, z);
-      scene.add(s);
-      dashes.push(s); // scrolls & wraps with the lane dashes
-    }
-  }
-}
 
-// Guardrails + streetlights + neon buildings (recycled scenery)
-const scenery = [];
+// Streetlights + neon buildings — all static geometry is merged into two big
+// "chunks" that scroll and leapfrog: a handful of draw calls instead of hundreds.
 
 // --- Facade textures: tileable emissive window grids (a few variants shared by all towers) ---
 function windowTexture() {
@@ -174,17 +174,12 @@ function windowTexture() {
   return tex;
 }
 const WINDOW_TEXES = Array.from({ length: 5 }, windowTexture);
-const FACADE_ROOF = new THREE.MeshStandardMaterial({ color: 0x0d0d16, roughness: 0.9 });
-// Windows keep a constant real-world size: the tile repeats with the tower's dimensions.
-function facadeMaterial(w, h) {
-  const tex = WINDOW_TEXES[Math.floor(Math.random() * WINDOW_TEXES.length)].clone();
-  tex.needsUpdate = true;
-  tex.repeat.set(Math.max(1, Math.round(w / 3.2)), Math.max(1, Math.round(h / 3.4)));
-  return new THREE.MeshStandardMaterial({
-    color: 0x0f0f1c, roughness: 0.85,
-    emissive: 0xffffff, emissiveIntensity: 0.9, emissiveMap: tex,
-  });
-}
+// 5 shared facade materials — window tiling is baked into each tower's UVs instead
+// of per-building texture clones, so towers with the same variant can merge.
+const FACADE_MATS = WINDOW_TEXES.map((tex) => new THREE.MeshStandardMaterial({
+  color: 0x0f0f1c, roughness: 0.85,
+  emissive: 0xffffff, emissiveIntensity: 0.9, emissiveMap: tex,
+}));
 
 // --- Glowing rooftop/facade signs ---
 const SIGN_TEXES = (() => {
@@ -205,100 +200,111 @@ const SIGN_TEXES = (() => {
   });
 })();
 
-function makeBuilding(side) {
-  const g = new THREE.Group();
-  const W = 6 + Math.random() * 7, D = 7 + Math.random() * 4;
-  const H = 7 + Math.random() * 26;
-  const towerMats = (w, h) => { const f = facadeMaterial(w, h); return [f, f, FACADE_ROOF, FACADE_ROOF, f, f]; };
-  const tower = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), towerMats(Math.max(W, D), H));
-  tower.position.y = H / 2;
-  g.add(tower);
+const SIGN_MATS = SIGN_TEXES.map((tex) => new THREE.MeshBasicMaterial({ map: tex }));
+const DARK_MAT = new THREE.MeshStandardMaterial({ color: 0x23232e, roughness: 0.85 });
+const NEON_MAT = new THREE.MeshBasicMaterial({ vertexColors: true });
+const OUTLINE_MAT = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.75 });
+const NEON_COLORS = [0xff2d6e, 0x18e2ff, 0xb02dff, 0x18c2ff];
+const CHUNK_LEN = 450;
 
-  // 30% get a setback upper block (classic skyline profile)
-  let topY = H, topW = W, topD = D;
-  if (Math.random() < 0.3) {
-    const w2 = W * 0.65, d2 = D * 0.7, h2 = 4 + Math.random() * 8;
-    const up = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, d2), towerMats(Math.max(w2, d2), h2));
-    up.position.y = H + h2 / 2;
-    g.add(up);
-    topY = H + h2; topW = w2; topD = d2;
-  }
+// One 450m band of city, merged into ≤8 draw calls + a few billboard planes.
+function buildSceneryChunk() {
+  const chunk = new THREE.Group();
+  const windowGeos = [[], [], [], [], []];
+  const darkGeos = [], neonGeos = [], lineGeos = [];
+  const col = new THREE.Color();
 
-  // Roof props: antenna with red beacon, AC unit
-  if (Math.random() < 0.6) {
-    const ax = (Math.random() - 0.5) * topW * 0.4;
-    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.09, 2.6),
-      new THREE.MeshStandardMaterial({ color: 0x33333f, roughness: 0.6 }));
-    ant.position.set(ax, topY + 1.3, 0);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff3344 }));
-    tip.position.set(ax, topY + 2.65, 0);
-    g.add(ant, tip);
-  }
-  if (Math.random() < 0.5) {
-    const ac = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 1.1),
-      new THREE.MeshStandardMaterial({ color: 0x1e1e28, roughness: 0.85 }));
-    ac.position.set((Math.random() - 0.5) * topW * 0.5, topY + 0.4, (Math.random() - 0.5) * topD * 0.4);
-    g.add(ac);
-  }
+  const tint = (geo, hex) => { // per-vertex color so one material draws all neon parts
+    const n = geo.attributes.position.count;
+    const arr = new Float32Array(n * 3);
+    col.set(hex);
+    for (let i = 0; i < n; i++) { arr[i * 3] = col.r; arr[i * 3 + 1] = col.g; arr[i * 3 + 2] = col.b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    return geo;
+  };
 
-  // Synthwave identity: neon cap + edge outline on some towers
-  const neonC = [0xff2d6e, 0x18e2ff, 0xb02dff, 0x18c2ff][Math.floor(Math.random() * 4)];
-  if (Math.random() < 0.5) {
-    const neon = new THREE.Mesh(new THREE.BoxGeometry(W + 0.3, 0.22, D + 0.3),
-      new THREE.MeshBasicMaterial({ color: neonC }));
-    neon.position.y = H + 0.02;
-    g.add(neon);
-  }
-  if (Math.random() < 0.35) {
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(tower.geometry),
-      new THREE.LineBasicMaterial({ color: neonC, transparent: true, opacity: 0.75 })
-    );
-    outline.position.copy(tower.position);
-    g.add(outline);
-  }
+  // Tower block: window texture tiles at constant real-world size (baked into UVs).
+  const tower = (w, h, d, x, z, y0) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    const repX = Math.max(1, Math.round(Math.max(w, d) / 3.2));
+    const repY = Math.max(1, Math.round(h / 3.4));
+    const uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * repX, uv.getY(i) * repY);
+    g.translate(x, y0 + h / 2, z);
+    windowGeos[Math.floor(Math.random() * 5)].push(g);
+    const cap = new THREE.BoxGeometry(w + 0.06, 0.12, d + 0.06); // dark roof
+    cap.translate(x, y0 + h + 0.06, z);
+    darkGeos.push(cap);
+  };
 
-  // Glowing billboard facing the road on ~1 in 4 towers
-  if (Math.random() < 0.25) {
-    const tex = SIGN_TEXES[Math.floor(Math.random() * SIGN_TEXES.length)];
-    const bw = Math.min(D * 0.85, 5.5), bh = bw * 0.375;
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh),
-      new THREE.MeshBasicMaterial({ map: tex }));
-    sign.position.set(-side * (W / 2 + 0.06), H * 0.72, 0);
-    sign.rotation.y = -side * Math.PI / 2;
-    g.add(sign);
-  }
-  return g;
-}
-function makeLamp() {
-  const g = new THREE.Group();
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 6),
-    new THREE.MeshStandardMaterial({ color: 0x44444e }));
-  pole.position.y = 3;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 1.4),
-    new THREE.MeshBasicMaterial({ color: 0xffe9b0 }));
-  head.position.set(0, 6, -0.5);
-  g.add(pole, head);
-  return g;
-}
-for (let z = 20; z > -420; z -= 22) {
-  for (const side of [-1, 1]) {
-    if (Math.random() < 0.85) {
-      const b = makeBuilding(side);
-      b.position.set(side * (18 + Math.random() * 20), 0, z + Math.random() * 8);
-      scene.add(b); scenery.push(b);
+  for (let z = -10; z > -CHUNK_LEN + 10; z -= 22) {
+    for (const side of [-1, 1]) {
+      if (Math.random() >= 0.85) continue;
+      const W = 6 + Math.random() * 7, D = 7 + Math.random() * 4;
+      const H = 7 + Math.random() * 26;
+      const x = side * (18 + Math.random() * 20);
+      const zz = z + Math.random() * 8;
+      tower(W, H, D, x, zz, 0);
+
+      let topY = H, topW = W, topD = D;
+      if (Math.random() < 0.3) { // setback upper block
+        const w2 = W * 0.65, d2 = D * 0.7, h2 = 4 + Math.random() * 8;
+        tower(w2, h2, d2, x, zz, H);
+        topY = H + h2; topW = w2; topD = d2;
+      }
+      if (Math.random() < 0.6) { // antenna + red beacon
+        const ax = x + (Math.random() - 0.5) * topW * 0.4;
+        const ant = new THREE.CylinderGeometry(0.05, 0.09, 2.6, 6);
+        ant.translate(ax, topY + 1.3, zz);
+        darkGeos.push(ant);
+        neonGeos.push(tint(new THREE.SphereGeometry(0.13, 6, 6).translate(ax, topY + 2.65, zz), 0xff3344));
+      }
+      if (Math.random() < 0.5) { // AC unit
+        const ac = new THREE.BoxGeometry(1.4, 0.8, 1.1);
+        ac.translate(x + (Math.random() - 0.5) * topW * 0.5, topY + 0.4, zz + (Math.random() - 0.5) * topD * 0.4);
+        darkGeos.push(ac);
+      }
+      const neonC = NEON_COLORS[Math.floor(Math.random() * 4)];
+      if (Math.random() < 0.5) { // neon cap
+        neonGeos.push(tint(new THREE.BoxGeometry(W + 0.3, 0.22, D + 0.3).translate(x, H + 0.02, zz), neonC));
+      }
+      if (Math.random() < 0.35) { // synthwave edge outline
+        const eg = new THREE.EdgesGeometry(new THREE.BoxGeometry(W, H, D));
+        eg.translate(x, H / 2, zz);
+        lineGeos.push(tint(eg, neonC));
+      }
+      if (Math.random() < 0.25) { // billboard (individual plane, shared material)
+        const bw = Math.min(D * 0.85, 5.5), bh = bw * 0.375;
+        const sign = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh),
+          SIGN_MATS[Math.floor(Math.random() * SIGN_MATS.length)]);
+        sign.position.set(x - side * (W / 2 + 0.06), H * 0.72, zz);
+        sign.rotation.y = -side * Math.PI / 2;
+        chunk.add(sign);
+      }
     }
   }
-}
-for (let z = 0; z > -420; z -= 35) {
-  for (const side of [-1, 1]) {
-    const l = makeLamp();
-    l.position.set(side * 8.2, 0, z);
-    l.scale.x = side;
-    scene.add(l); scenery.push(l);
+  // Street lamps
+  for (let z = 0; z > -CHUNK_LEN; z -= 35) {
+    for (const side of [-1, 1]) {
+      const pole = new THREE.CylinderGeometry(0.08, 0.1, 6, 6);
+      pole.translate(side * 8.2, 3, z);
+      darkGeos.push(pole);
+      neonGeos.push(tint(new THREE.BoxGeometry(0.5, 0.15, 1.4).translate(side * 8.2, 6, z - 0.5), 0xffe9b0));
+    }
   }
+
+  for (let v = 0; v < 5; v++)
+    if (windowGeos[v].length) chunk.add(new THREE.Mesh(mergeGeometries(windowGeos[v]), FACADE_MATS[v]));
+  if (darkGeos.length) chunk.add(new THREE.Mesh(mergeGeometries(darkGeos), DARK_MAT));
+  if (neonGeos.length) chunk.add(new THREE.Mesh(mergeGeometries(neonGeos), NEON_MAT));
+  if (lineGeos.length) chunk.add(new THREE.LineSegments(mergeGeometries(lineGeos), OUTLINE_MAT));
+  return chunk;
 }
+
+const chunks = [buildSceneryChunk(), buildSceneryChunk()];
+chunks[0].position.z = 0;
+chunks[1].position.z = -CHUNK_LEN;
+scene.add(chunks[0], chunks[1]);
 
 /* ================= PLAYER ================= */
 let playerColor = '#ff2d2d';
@@ -323,7 +329,7 @@ function spawnTraffic(zMin, zMax) {
   }
   if (!ok) return false; // road too crowded there — skip this spawn
   const car = randomTrafficCar();
-  car.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  // (no castShadow on traffic — only the player casts, halves the shadow pass)
   car.position.set(LANES[laneIdx], 0, z);
   // Each lane has a flow speed: rightmost slow → leftmost fast (keeps traffic spread out)
   car.userData.baseSpeed = 11 + laneIdx * 5 + Math.random() * 3;
@@ -479,12 +485,10 @@ $('menuBtn').addEventListener('click', () => {
 });
 
 spawnPlayer();
-if (TEST_MODE) window.__nitro = { state, traffic, getPlayer: () => player };
+if (TEST_MODE) window.__nitro = { state, traffic, getPlayer: () => player, renderer };
 
 /* ================= MAIN LOOP ================= */
 const clock = new THREE.Clock();
-const playerBox = new THREE.Box3(), otherBox = new THREE.Box3();
-const tmpSize = new THREE.Vector3();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -531,15 +535,12 @@ function animate() {
     state.dist += state.speed * dt;
     state.score += state.speed * dt * (1 + state.combo * 0.25);
 
-    // Move world past the player
+    // Move world past the player: 2 merged stripe meshes + 2 scenery chunks
     const rel = state.speed * dt;
-    for (const d of dashes) {
-      d.position.z += rel;
-      if (d.position.z > 15) d.position.z -= 410;
-    }
-    for (const s of scenery) {
-      s.position.z += rel;
-      if (s.position.z > 30) s.position.z -= 450;
+    stripeGroup.position.z = (stripeGroup.position.z + rel) % 9; // periodic pattern
+    for (const ch of chunks) {
+      ch.position.z += rel;
+      if (ch.position.z - CHUNK_LEN > 35) ch.position.z -= CHUNK_LEN * 2; // leapfrog ahead
     }
 
     // Traffic AI: follow the car ahead in the lane, then speed back up to the
@@ -595,16 +596,16 @@ function animate() {
       if (state.comboTimer <= 0) { state.combo = 0; comboEl.classList.remove('show'); }
     }
 
-    // Collision
-    playerBox.setFromObject(player);
-    playerBox.getSize(tmpSize);
-    playerBox.expandByVector(tmpSize.multiplyScalar(-0.18)); // forgiving hitbox
+    // Collision — cheap AABBs from known footprints (no scene-graph traversal)
+    const ps = player.userData.size;
+    const phw = ps.w * 0.41, phl = ps.l * 0.41; // forgiving hitbox (~18% shrunk)
     for (const c of traffic) {
-      if (Math.abs(c.position.z - player.position.z) > 8) continue;
-      otherBox.setFromObject(c);
-      otherBox.getSize(tmpSize);
-      otherBox.expandByVector(tmpSize.multiplyScalar(-0.15));
-      if (playerBox.intersectsBox(otherBox)) { gameOver(); break; }
+      const dz = Math.abs(c.position.z - player.position.z);
+      if (dz > 8) continue;
+      const cs = c.userData.size;
+      if (Math.abs(c.position.x - player.position.x) < phw + cs.w * 0.425 && dz < phl + cs.l * 0.425) {
+        gameOver(); break;
+      }
     }
 
     // Engine sound follows speed

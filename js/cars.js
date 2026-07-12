@@ -1,9 +1,10 @@
 // Car factory — every car is built from an extruded side-silhouette + wheels + light details.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const TIRE_MAT = new THREE.MeshStandardMaterial({ color: 0x111114, roughness: 0.9 });
 const RIM_MAT  = new THREE.MeshStandardMaterial({ color: 0xe2e4ea, roughness: 0.18, metalness: 1.0, envMapIntensity: 1.6 });
-const GLASS_MAT = new THREE.MeshPhysicalMaterial({ color: 0x0a121e, roughness: 0.05, metalness: 0.3, envMapIntensity: 2.0, clearcoat: 1.0, clearcoatRoughness: 0.05 });
+const GLASS_MAT = new THREE.MeshStandardMaterial({ color: 0x0a121e, roughness: 0.05, metalness: 0.4, envMapIntensity: 2.0 });
 const HEADLIGHT_MAT = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff6cc, emissiveIntensity: 2.2 });
 const TAILLIGHT_MAT = new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff1111, emissiveIntensity: 2.2 });
 const CARBON_MAT = new THREE.MeshStandardMaterial({ color: 0x15151a, roughness: 0.5, metalness: 0.45 });
@@ -19,8 +20,15 @@ function box(w, h, d, mat, x = 0, y = 0, z = 0, rot = null) {
 }
 
 function paint(color) {
-  // Glossy automotive paint: metallic base + clear-coat lacquer that reflects the
-  // scene env map — this is what makes the cars read as premium, not flat/plastic.
+  // Traffic paint: glossy metallic Standard — much cheaper than clearcoat,
+  // still reflects the env map so cars read as shiny at a glance.
+  return new THREE.MeshStandardMaterial({
+    color, roughness: 0.24, metalness: 0.7, envMapIntensity: 1.3,
+  });
+}
+
+function heroPaint(color) {
+  // Player-only clearcoat lacquer (one car can afford the expensive shader).
   return new THREE.MeshPhysicalMaterial({
     color, roughness: 0.26, metalness: 0.7,
     clearcoat: 1.0, clearcoatRoughness: 0.12,
@@ -75,19 +83,20 @@ function wheel(radius, fat, sport = false) {
   g.add(tire);
   const rimR = radius * (sport ? 0.66 : 0.55);
   if (sport) {
-    // Brushed brake disc + 5-spoke alloy + chrome hub (whole group spins in-game)
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(rimR, rimR, fat * 0.35, 24),
-      new THREE.MeshStandardMaterial({ color: 0x2a2b31, roughness: 0.35, metalness: 0.85 }));
-    disc.rotation.z = Math.PI / 2;
-    g.add(disc);
+    // Brake disc + 5-spoke alloy + hub — merged into ONE mesh (1 draw call/wheel)
+    const geos = [];
+    const disc = new THREE.CylinderGeometry(rimR, rimR, fat * 0.35, 18);
+    disc.rotateZ(Math.PI / 2);
+    geos.push(disc);
     for (let i = 0; i < 5; i++) {
-      const s = new THREE.Mesh(new THREE.BoxGeometry(fat + 0.05, rimR * 1.85, 0.05), RIM_MAT);
-      s.rotation.x = (i / 5) * Math.PI * 2;
-      g.add(s);
+      const s = new THREE.BoxGeometry(fat + 0.05, rimR * 1.85, 0.05);
+      s.rotateX((i / 5) * Math.PI * 2);
+      geos.push(s);
     }
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(rimR * 0.34, rimR * 0.34, fat + 0.06, 14), CHROME_MAT);
-    hub.rotation.z = Math.PI / 2;
-    g.add(hub);
+    const hub = new THREE.CylinderGeometry(rimR * 0.34, rimR * 0.34, fat + 0.06, 10);
+    hub.rotateZ(Math.PI / 2);
+    geos.push(hub);
+    g.add(new THREE.Mesh(mergeGeometries(geos), RIM_MAT));
   } else {
     const rim = new THREE.Mesh(new THREE.CylinderGeometry(rimR, rimR, fat + 0.02, 12), RIM_MAT);
     rim.rotation.z = Math.PI / 2;
@@ -134,7 +143,7 @@ function cabinGlass(car, { w, h, len, y, z, rake = 0 }) {
 
 export function buildSupercar(color) {
   const car = new THREE.Group();
-  const mat = paint(color);
+  const mat = heroPaint(color);
   const HW = 0.98; // body half-width at the sides
 
   // --- Main body: low aggressive wedge ---

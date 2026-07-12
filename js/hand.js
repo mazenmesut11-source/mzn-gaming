@@ -27,8 +27,15 @@ export class HandControl {
     });
     hands.onResults((res) => this._onResults(res));
 
+    // Process every 2nd camera frame — halves the tracking CPU cost, and the
+    // steering low-pass filter smooths over the tiny extra latency.
+    let skip = false;
     const camera = new Camera(videoEl, {
-      onFrame: async () => { await hands.send({ image: videoEl }); },
+      onFrame: async () => {
+        skip = !skip;
+        if (skip) return;
+        await hands.send({ image: videoEl });
+      },
       width: 320,
       height: 240
     });
