@@ -21,11 +21,36 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; // cinematic contrast
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 const DUSK = 0x1c1233; // deep synthwave purple night
 scene.background = new THREE.Color(DUSK);
 scene.fog = new THREE.Fog(DUSK, 70, 260);
+
+// Reflection environment — a synthwave sky/sun/ground gradient baked into an
+// env map so car paint reflects the scene mood (glossy premium look).
+(function buildEnvironment() {
+  const c = document.createElement('canvas');
+  c.width = 32; c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0.00, '#120a2a'); // zenith
+  g.addColorStop(0.42, '#3a2470');
+  g.addColorStop(0.55, '#ff7b3a'); // sun band on the horizon
+  g.addColorStop(0.60, '#ff9d4a');
+  g.addColorStop(0.66, '#2a1a44');
+  g.addColorStop(1.00, '#08040f'); // ground
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromEquirectangular(tex).texture;
+  tex.dispose();
+  pmrem.dispose();
+})();
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 500);
 addEventListener('resize', () => {
@@ -127,34 +152,123 @@ for (const x of [-ROAD_W / 2 + 0.3, ROAD_W / 2 - 0.3]) {
 
 // Guardrails + streetlights + neon buildings (recycled scenery)
 const scenery = [];
-function makeBuilding() {
-  const h = 6 + Math.random() * 26;
+
+// --- Facade textures: tileable emissive window grids (a few variants shared by all towers) ---
+function windowTexture() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#07070d';
+  ctx.fillRect(0, 0, 64, 128);
+  const cols = 4, rows = 8, cw = 64 / cols, rh = 128 / rows;
+  for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) {
+    const r = Math.random();
+    if (r < 0.30) ctx.fillStyle = 'rgba(255,214,150,0.95)';       // warm lit office
+    else if (r < 0.42) ctx.fillStyle = 'rgba(160,200,255,0.85)';  // cool lit
+    else if (r < 0.50) ctx.fillStyle = 'rgba(96,96,150,0.55)';    // dim
+    else ctx.fillStyle = 'rgba(16,16,28,0.95)';                   // dark
+    ctx.fillRect(x * cw + 2.5, y * rh + 2.5, cw - 5, rh - 5);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+const WINDOW_TEXES = Array.from({ length: 5 }, windowTexture);
+const FACADE_ROOF = new THREE.MeshStandardMaterial({ color: 0x0d0d16, roughness: 0.9 });
+// Windows keep a constant real-world size: the tile repeats with the tower's dimensions.
+function facadeMaterial(w, h) {
+  const tex = WINDOW_TEXES[Math.floor(Math.random() * WINDOW_TEXES.length)].clone();
+  tex.needsUpdate = true;
+  tex.repeat.set(Math.max(1, Math.round(w / 3.2)), Math.max(1, Math.round(h / 3.4)));
+  return new THREE.MeshStandardMaterial({
+    color: 0x0f0f1c, roughness: 0.85,
+    emissive: 0xffffff, emissiveIntensity: 0.9, emissiveMap: tex,
+  });
+}
+
+// --- Glowing rooftop/facade signs ---
+const SIGN_TEXES = (() => {
+  const texts = ['MZN GAMING', 'NITRO', 'SYNTH FM', 'TURBO', 'NIGHT DRIVE', 'MZN'];
+  const colors = ['#ff2d6e', '#18e2ff', '#ffd10a', '#b02dff', '#2dff6e', '#ff9d0a'];
+  return texts.map((t, i) => {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 96;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#08080f';
+    ctx.fillRect(0, 0, 256, 96);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = colors[i]; ctx.shadowBlur = 18;
+    ctx.fillStyle = colors[i];
+    ctx.font = `bold ${t.length > 8 ? 34 : 46}px Arial`;
+    ctx.fillText(t, 128, 50);
+    return new THREE.CanvasTexture(c);
+  });
+})();
+
+function makeBuilding(side) {
   const g = new THREE.Group();
-  const tone = [0x14101f, 0x1a1428, 0x100c1a][Math.floor(Math.random() * 3)];
-  const geo = new THREE.BoxGeometry(6 + Math.random() * 6, h, 8);
-  const b = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: tone, roughness: 0.85 }));
-  b.position.y = h / 2;
-  g.add(b);
-  // Neon outline on every edge of the tower (synthwave key-art look)
+  const W = 6 + Math.random() * 7, D = 7 + Math.random() * 4;
+  const H = 7 + Math.random() * 26;
+  const towerMats = (w, h) => { const f = facadeMaterial(w, h); return [f, f, FACADE_ROOF, FACADE_ROOF, f, f]; };
+  const tower = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), towerMats(Math.max(W, D), H));
+  tower.position.y = H / 2;
+  g.add(tower);
+
+  // 30% get a setback upper block (classic skyline profile)
+  let topY = H, topW = W, topD = D;
+  if (Math.random() < 0.3) {
+    const w2 = W * 0.65, d2 = D * 0.7, h2 = 4 + Math.random() * 8;
+    const up = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, d2), towerMats(Math.max(w2, d2), h2));
+    up.position.y = H + h2 / 2;
+    g.add(up);
+    topY = H + h2; topW = w2; topD = d2;
+  }
+
+  // Roof props: antenna with red beacon, AC unit
+  if (Math.random() < 0.6) {
+    const ax = (Math.random() - 0.5) * topW * 0.4;
+    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.09, 2.6),
+      new THREE.MeshStandardMaterial({ color: 0x33333f, roughness: 0.6 }));
+    ant.position.set(ax, topY + 1.3, 0);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff3344 }));
+    tip.position.set(ax, topY + 2.65, 0);
+    g.add(ant, tip);
+  }
+  if (Math.random() < 0.5) {
+    const ac = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 1.1),
+      new THREE.MeshStandardMaterial({ color: 0x1e1e28, roughness: 0.85 }));
+    ac.position.set((Math.random() - 0.5) * topW * 0.5, topY + 0.4, (Math.random() - 0.5) * topD * 0.4);
+    g.add(ac);
+  }
+
+  // Synthwave identity: neon cap + edge outline on some towers
   const neonC = [0xff2d6e, 0x18e2ff, 0xb02dff, 0x18c2ff][Math.floor(Math.random() * 4)];
-  const outline = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geo),
-    new THREE.LineBasicMaterial({ color: neonC, transparent: true, opacity: 0.9 })
-  );
-  outline.position.y = h / 2;
-  g.add(outline);
-  // Bright neon cap
-  const neon = new THREE.Mesh(new THREE.BoxGeometry(geo.parameters.width + 0.3, 0.25, 8.3),
-    new THREE.MeshBasicMaterial({ color: neonC }));
-  neon.position.y = h;
-  g.add(neon);
-  // A few lit windows
-  const win = new THREE.Mesh(
-    new THREE.PlaneGeometry(geo.parameters.width * 0.7, h * 0.55),
-    new THREE.MeshBasicMaterial({ color: 0x2a2244, transparent: true, opacity: 0.9 })
-  );
-  win.position.set(0, h * 0.45, 4.05);
-  g.add(win);
+  if (Math.random() < 0.5) {
+    const neon = new THREE.Mesh(new THREE.BoxGeometry(W + 0.3, 0.22, D + 0.3),
+      new THREE.MeshBasicMaterial({ color: neonC }));
+    neon.position.y = H + 0.02;
+    g.add(neon);
+  }
+  if (Math.random() < 0.35) {
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(tower.geometry),
+      new THREE.LineBasicMaterial({ color: neonC, transparent: true, opacity: 0.75 })
+    );
+    outline.position.copy(tower.position);
+    g.add(outline);
+  }
+
+  // Glowing billboard facing the road on ~1 in 4 towers
+  if (Math.random() < 0.25) {
+    const tex = SIGN_TEXES[Math.floor(Math.random() * SIGN_TEXES.length)];
+    const bw = Math.min(D * 0.85, 5.5), bh = bw * 0.375;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh),
+      new THREE.MeshBasicMaterial({ map: tex }));
+    sign.position.set(-side * (W / 2 + 0.06), H * 0.72, 0);
+    sign.rotation.y = -side * Math.PI / 2;
+    g.add(sign);
+  }
   return g;
 }
 function makeLamp() {
@@ -171,7 +285,7 @@ function makeLamp() {
 for (let z = 20; z > -420; z -= 22) {
   for (const side of [-1, 1]) {
     if (Math.random() < 0.85) {
-      const b = makeBuilding();
+      const b = makeBuilding(side);
       b.position.set(side * (18 + Math.random() * 20), 0, z + Math.random() * 8);
       scene.add(b); scenery.push(b);
     }
@@ -405,9 +519,9 @@ function animate() {
     player.rotation.z = -input.steer * 0.12;
     player.rotation.y = -input.steer * 0.22;
 
-    // Wheel spin
+    // Wheel spin (rotate the whole wheel group so alloy spokes spin too)
     if (player.userData.wheels) {
-      for (const w of player.userData.wheels) w.children[0].rotation.x -= state.speed * dt * 2.5;
+      for (const w of player.userData.wheels) w.rotation.x -= state.speed * dt * 2.5;
     }
 
     // Wheel HUD
@@ -451,7 +565,7 @@ function animate() {
       const c = traffic[i];
       c.position.z += (state.speed - c.userData.speed) * dt;
       if (c.userData.wheels) {
-        for (const w of c.userData.wheels) w.children[0].rotation.x -= c.userData.speed * dt * 2.5;
+        for (const w of c.userData.wheels) w.rotation.x -= c.userData.speed * dt * 2.5;
       }
       // Near miss: passed us close without touching
       if (!c.userData.passed && c.position.z > player.position.z + 2) {
