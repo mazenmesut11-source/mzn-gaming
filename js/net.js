@@ -5,6 +5,19 @@
 
 const PREFIX = 'MZNG-'; // namespaces our ids on the public PeerJS broker
 
+// ICE servers = how two players behind different routers/Wi-Fi/4G find each other.
+// STUN handles most networks; TURN relays the ~15% behind strict/symmetric NAT
+// (common on mobile data) where a direct P2P link is impossible.
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  // Open Relay — free public TURN (best-effort). 80 + 443 + TCP/443 for firewalls.
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+];
+const PEER_OPTS = { config: { iceServers: ICE_SERVERS } };
+
 export class NetPeer {
   constructor() {
     this.peer = null;
@@ -27,7 +40,7 @@ export class NetPeer {
 
   host(code, onReady) {
     this.isHost = true;
-    this.peer = new Peer(PREFIX + code);
+    this.peer = new Peer(PREFIX + code, PEER_OPTS);
     this.peer.on('open', () => onReady && onReady(code));
     this.peer.on('connection', (c) => this._bindConn(c));
     this.peer.on('error', (e) => this._err(e));
@@ -35,7 +48,7 @@ export class NetPeer {
 
   join(code) {
     this.isHost = false;
-    this.peer = new Peer();
+    this.peer = new Peer(undefined, PEER_OPTS);
     this.peer.on('open', () => {
       const c = this.peer.connect(PREFIX + code, { reliable: true });
       this._bindConn(c);
