@@ -1,51 +1,53 @@
-# MZN GAMING 🏎️🖐
+# MZN GAMING
 
-Jeu de voiture 3D — tsou9 el karhba **b yeddek 9oddem la caméra** (hand tracking).
+A 3D arcade driving game you steer with your hand in front of the webcam. Dodge
+traffic down an endless neon highway, chain near-misses for combo points, and
+race a friend online.
 
-**🎮 AL3AB LIVE:** https://mazenmesut11-source.github.io/mzn-gaming/
-
-## Kifech tjarrbou (How to run)
-
-```
-cd "C:\Users\MA ZEN\Desktop\car gaming"
-python -m http.server 8020
-```
-
-Ba3d, 7el fi Chrome/Edge: **http://localhost:8020**
-
-> El caméra te5dem kahaw 3ala `localhost` walla `https` — matjarrebch b double-click 3al fichier direct.
+Play it here: https://mazenmesut11-source.github.io/mzn-gaming/
 
 ## Controls
 
-**🖐 Hand mode (caméra):**
-- Erfa3 yeddek 9oddem la caméra ki volant
-- **Mil yeddek** lel isar/imin = steering
-- **✊ Sakker yeddek (fist)** = frein
-- **🖐 Yed ma7loula** = vitesse maximale
+- **Hand (webcam):** hold your hand up like a steering wheel and tilt it to steer.
+  Close your fist to brake, open palm for full speed.
+- **Keyboard:** arrow keys or A/D to steer, Down / S / Space to brake.
+- **Touch (phones):** tap the left or right half of the screen to steer, both
+  sides at once to brake.
 
-**⌨ Keyboard mode:**
-- `←` `→` walla `A` `D` = steering
-- `↓` / `S` / `Space` = frein
+Hand tracking needs a browser with webcam access. Keyboard and touch work
+everywhere, and phones default to touch.
 
-## Gameplay
+## Online versus
 
-- Autoroute infinie, tharrab men el trafic (sedans, SUVs, taxis, police, camions)
-- **Near miss** = t3adda 9rib men karhba bla ma tomsها → combo bonus ×2, ×3...
-- El vitesse tozdad m3a el wa9t (7atta 220 km/h)
-- Best score yetsajjel automatiquement
+Open the menu and hit "Play Online". One player creates a room and gets a
+four-letter code, the other types it in to join. You both drive the same road,
+see each other as a ghost car, and whoever crashes first loses — winner takes the
+round, rematch from the results screen.
 
-## 🌐 Online Versus (2 joueurs)
+It runs peer-to-peer over WebRTC (PeerJS), so there's no game server to host.
+You only need the room code and an internet connection, not the same Wi-Fi —
+different networks and mobile data work too.
 
-- Fel menu → **🌐 PLAY ONLINE — VERSUS**
-- Wa7ed ya3mel **CREATE ROOM** → yje-h **code** (4 7rouf) yab3thou l sa7bou
-- El thani yekteb el code → **JOIN** → décompte 3-2-1 → GO
-- El zouz ysou9ou (kل wa7ed 3ala جهازو), tchouf sa7bek ki **ghost** fel طريق
-- **Elli يكرّش لوّل يخسر — elli yob9a 7ay yerbe7** 🏆 (b REMATCH tnajmou t3awdou)
-- P2P direct (WebRTC/PeerJS) — bla server. Ken el réseau sévère (firewall/4G) yfشل, jarrbou Wi-Fi أخرى.
+## Running locally
 
-## Tech
+Plain static files, so any static server does the job:
 
-- **Three.js** — 3D graphics (krahb procedural: supercar, muscle, SUV, taxi, police, truck)
-- **MediaPipe Hands** — hand tracking men el webcam
-- **WebAudio** — sound mta3 el moteur w el crash
-- Kollou vanilla JS — bla build, bla install. Ready lel web (itch.io, Poki, CrazyGames...)
+```
+python -m http.server 8020
+```
+
+Then open http://localhost:8020. Opening the HTML file directly won't work — the
+webcam needs `localhost` or HTTPS.
+
+## Built with
+
+- Three.js — rendering and the procedural car/city models
+- MediaPipe Hands — webcam hand tracking
+- WebRTC / PeerJS — the online matches
+- Web Audio — engine and crash sound
+
+No build step and nothing to install; it's vanilla JavaScript.
+
+## License
+
+Proprietary. All rights reserved — see [LICENSE](LICENSE).
