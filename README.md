@@ -34,6 +34,15 @@ Ba3d, 7el fi Chrome/Edge: **http://localhost:8020**
 - El vitesse tozdad m3a el wa9t (7atta 220 km/h)
 - Best score yetsajjel automatiquement
 
+## 🌐 Online Versus (2 joueurs)
+
+- Fel menu → **🌐 PLAY ONLINE — VERSUS**
+- Wa7ed ya3mel **CREATE ROOM** → yje-h **code** (4 7rouf) yab3thou l sa7bou
+- El thani yekteb el code → **JOIN** → décompte 3-2-1 → GO
+- El zouz ysou9ou (kل wa7ed 3ala جهازو), tchouf sa7bek ki **ghost** fel طريق
+- **Elli يكرّش لوّل يخسر — elli yob9a 7ay yerbe7** 🏆 (b REMATCH tnajmou t3awdou)
+- P2P direct (WebRTC/PeerJS) — bla server. Ken el réseau sévère (firewall/4G) yfشل, jarrbou Wi-Fi أخرى.
+
 ## Tech
 
 - **Three.js** — 3D graphics (krahb procedural: supercar, muscle, SUV, taxi, police, truck)

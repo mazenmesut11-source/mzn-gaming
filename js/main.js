@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildSupercar, randomTrafficCar } from './cars.js';
 import { HandControl } from './hand.js';
+import { NetPeer, makeRoomCode } from './net.js';
 
 // #test → run the loop even in a hidden tab (headless verification)
 const TEST_MODE = location.hash === '#test';
@@ -387,7 +388,9 @@ function crashSound() {
 
 /* ================= GAME STATE ================= */
 const state = {
-  phase: 'menu',           // menu | playing | over
+  phase: 'menu',           // menu | playing | over | versusEnd
+  mode: 'solo',            // solo | versus
+  countdown: 0,            // versus start countdown (s)
   speed: 0,                // m/s
   maxSpeed: 62,            // ~220 km/h at full ramp
   dist: 0,
@@ -402,16 +405,168 @@ bestEl.textContent = 'BEST ' + state.best;
 const menuBestEl = $('menuBest');
 menuBestEl.textContent = state.best.toLocaleString();
 
-function startGame() {
+/* ================= MULTIPLAYER (P2P versus) ================= */
+const cdEl = $('countdown'), vsHudEl = $('vsHud');
+const net = new NetPeer();
+const mp = {
+  active: false,
+  rivalColor: '#18c2ff',
+  ghost: null,
+  rival: { x: 0, dist: 0, score: 0, present: false },
+  myDead: false, rivalDead: false, finished: false,
+  graceTimer: 0, sendTimer: 0,
+  wantRematch: false, rivalRematch: false,
+};
+
+net.onOpen = () => { net.send({ t: 'hello', color: playerColor }); };
+net.onError = (msg) => {
+  $('joinStatus').textContent = msg;
+  $('hostStatus').textContent = msg;
+};
+net.onClose = () => {
+  if (mp.active && !mp.finished) finishVersus('DISCONNECT');
+};
+net.onData = (m) => {
+  if (!m || !m.t) return;
+  if (m.t === 'hello') {
+    mp.rivalColor = m.color || '#18c2ff';
+    if (!mp.active) beginVersus();
+  } else if (m.t === 'state') {
+    mp.rival.x = m.x; mp.rival.dist = m.dist; mp.rival.score = m.score; mp.rival.present = true;
+  } else if (m.t === 'dead') {
+    mp.rivalDead = true; mp.rival.score = m.score; mp.rival.dist = m.dist;
+    onRivalDead();
+  } else if (m.t === 'rematch') {
+    mp.rivalRematch = true;
+    if (mp.wantRematch) beginVersus();
+    else $('vsResultSub').textContent = 'Rival wants a rematch — press REMATCH!';
+  }
+};
+
+function buildGhost(color) {
+  const g = buildSupercar(new THREE.Color(color).getHex());
+  g.traverse((o) => {
+    if (o.isMesh) {
+      o.material = o.material.clone();
+      o.material.transparent = true;
+      o.material.opacity = 0.5;
+      o.material.depthWrite = false;
+      o.castShadow = false;
+    }
+  });
+  scene.add(g);
+  return g;
+}
+function ensureGhost() {
+  if (mp.ghost) { scene.remove(mp.ghost); mp.ghost = null; }
+  mp.ghost = buildGhost(mp.rivalColor);
+  mp.ghost.visible = false;
+}
+function updateGhost() {
+  if (!mp.ghost) return;
+  mp.ghost.visible = mp.rival.present && !mp.rivalDead;
+  mp.ghost.position.x = mp.rival.x;
+  const gz = -(mp.rival.dist - state.dist);          // rival ahead → negative z (in front)
+  mp.ghost.position.z = Math.max(-55, Math.min(11, gz));
+}
+function updateVsHud() {
+  $('vsMe').textContent = Math.floor(state.score).toLocaleString();
+  $('vsRival').textContent = Math.floor(mp.rival.score).toLocaleString();
+  const gap = Math.round(state.dist - mp.rival.dist);
+  $('vsGap').textContent = gap >= 0 ? '+' + gap + 'm' : gap + 'm';
+}
+
+function beginVersus() {
+  if (mp.active) return;
+  mp.active = true;
+  mp.finished = false; mp.myDead = false; mp.rivalDead = false;
+  mp.wantRematch = false; mp.rivalRematch = false;
+  mp.graceTimer = 0; mp.sendTimer = 0;
+  mp.rival = { x: 0, dist: 0, score: 0, present: false };
+  ensureGhost();
+  $('online').classList.add('hidden');
+  $('versusResult').classList.add('hidden');
+  menuEl.classList.add('hidden');
+  startGame('versus');
+}
+
+// Local player crashed in a versus round.
+function crash() {
+  if (state.mode === 'versus') onLocalCrash();
+  else gameOver();
+}
+function onLocalCrash() {
+  if (mp.myDead) return;
+  mp.myDead = true;
+  state.phase = 'over';
+  state.shake = 1.2;
+  crashSound();
+  if (engineGain) engineGain.gain.setTargetAtTime(0, actx.currentTime, 0.1);
+  net.send({ t: 'dead', score: Math.floor(state.score), dist: Math.round(state.dist) });
+  if (mp.rivalDead) resolveVersus();
+  else mp.graceTimer = 0.7;            // wait for a near-simultaneous rival crash
+}
+function onRivalDead() {
+  if (mp.finished) return;
+  if (!mp.myDead) finishVersus('WIN');  // rival crashed first, I'm still alive
+  else resolveVersus();                 // both down → higher score wins
+}
+function resolveVersus() {
+  const me = Math.floor(state.score), rival = Math.floor(mp.rival.score);
+  finishVersus(me > rival ? 'WIN' : me < rival ? 'LOSE' : 'TIE');
+}
+function finishVersus(result) {
+  if (mp.finished) return;
+  mp.finished = true;
+  mp.active = false;
+  state.phase = 'versusEnd';
+  const s = Math.floor(state.score);
+  if (s > state.best) {
+    state.best = s;
+    localStorage.setItem('nitro_best', s);
+    bestEl.textContent = 'BEST ' + s;
+    menuBestEl.textContent = s.toLocaleString();
+  }
+  const title = $('vsResultTitle');
+  const map = {
+    WIN: ['YOU WIN! 🏆', '#2dff6e'], LOSE: ['YOU LOSE', '#ff2d2d'],
+    TIE: ['TIE!', '#ffd10a'], DISCONNECT: ['RIVAL LEFT', '#ffd10a'],
+  };
+  title.textContent = map[result][0];
+  title.style.color = map[result][1];
+  $('vsResultScore').textContent = s.toLocaleString();
+  $('vsResultSub').textContent = 'You ' + Math.round(state.dist) + 'm · Rival ' + Math.round(mp.rival.dist) + 'm';
+  setTimeout(() => {
+    hudEl.classList.add('hidden');
+    wheelBox.classList.add('hidden');
+    vsHudEl.classList.add('hidden');
+    $('versusResult').classList.remove('hidden');
+  }, 900);
+}
+function cleanupVersus() {
+  net.close();
+  mp.active = false; mp.finished = false;
+  if (mp.ghost) { scene.remove(mp.ghost); mp.ghost = null; }
+  vsHudEl.classList.add('hidden');
+  cdEl.classList.add('hidden');
+}
+
+function startGame(mode = 'solo') {
   for (const t of traffic) scene.remove(t);
   traffic.length = 0;
   spawnPlayer();
   for (let n = 0, guard = 0; n < 10 && guard < 60; guard++) { if (spawnTraffic(-260, -40)) n++; }
-  Object.assign(state, { phase: 'playing', speed: 16, dist: 0, score: 0, combo: 0, comboTimer: 0, time: 0, shake: 0 });
+  Object.assign(state, {
+    phase: 'playing', mode, speed: 16, dist: 0, score: 0,
+    combo: 0, comboTimer: 0, time: 0, shake: 0,
+    countdown: mode === 'versus' ? 3.9 : 0,
+  });
   menuEl.classList.add('hidden');
   overEl.classList.add('hidden');
+  $('versusResult').classList.add('hidden');
   hudEl.classList.remove('hidden');
   wheelBox.classList.remove('hidden');
+  vsHudEl.classList.toggle('hidden', mode !== 'versus');
   if (controlMode === 'hand') camBox.classList.remove('hidden');
   initAudio();
   if (actx.state === 'suspended') actx.resume();
@@ -475,7 +630,7 @@ $('playBtn').addEventListener('click', async () => {
   }
   startGame();
 });
-$('retryBtn').addEventListener('click', startGame);
+$('retryBtn').addEventListener('click', () => startGame('solo'));
 $('menuBtn').addEventListener('click', () => {
   overEl.classList.add('hidden');
   menuEl.classList.remove('hidden');
@@ -484,8 +639,63 @@ $('menuBtn').addEventListener('click', () => {
   player.rotation.set(0, 0, 0);
 });
 
+/* ---------- Online lobby wiring ---------- */
+$('onlineBtn').addEventListener('click', () => {
+  menuEl.classList.add('hidden');
+  $('online').classList.remove('hidden');
+  $('roomCodeBox').classList.add('hidden');
+  $('joinStatus').textContent = '';
+  $('hostStatus').textContent = 'Waiting for player 2…';
+  $('codeInput').value = '';
+});
+$('onlineBackBtn').addEventListener('click', () => {
+  cleanupVersus();
+  $('online').classList.add('hidden');
+  menuEl.classList.remove('hidden');
+});
+$('createRoomBtn').addEventListener('click', () => {
+  net.close();
+  const code = makeRoomCode();
+  $('roomCodeBox').classList.remove('hidden');
+  $('roomCode').textContent = '…';
+  $('hostStatus').textContent = 'Setting up room…';
+  net.host(code, (c) => {
+    $('roomCode').textContent = c;
+    $('hostStatus').textContent = 'Waiting for player 2…';
+  });
+});
+$('joinRoomBtn').addEventListener('click', () => {
+  const code = ($('codeInput').value || '').toUpperCase().trim();
+  if (code.length !== 4) { $('joinStatus').textContent = 'Enter the 4-character code.'; return; }
+  $('joinStatus').textContent = 'Connecting…';
+  net.close();
+  net.join(code);
+});
+$('codeInput').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase(); });
+$('vsRematchBtn').addEventListener('click', () => {
+  if (!net.conn || !net.conn.open) {  // rival gone → back to menu
+    cleanupVersus();
+    $('versusResult').classList.add('hidden');
+    menuEl.classList.remove('hidden');
+    state.phase = 'menu';
+    return;
+  }
+  mp.wantRematch = true;
+  net.send({ t: 'rematch' });
+  $('vsResultSub').textContent = 'Waiting for rival to accept…';
+  if (mp.rivalRematch) beginVersus();
+});
+$('vsMenuBtn').addEventListener('click', () => {
+  cleanupVersus();
+  $('versusResult').classList.add('hidden');
+  menuEl.classList.remove('hidden');
+  state.phase = 'menu';
+  player.position.set(0, 0, 0);
+  player.rotation.set(0, 0, 0);
+});
+
 spawnPlayer();
-if (TEST_MODE) window.__nitro = { state, traffic, getPlayer: () => player, renderer };
+if (TEST_MODE) window.__nitro = { state, traffic, getPlayer: () => player, renderer, mp, net };
 
 /* ================= MAIN LOOP ================= */
 const clock = new THREE.Clock();
@@ -504,7 +714,20 @@ function animate() {
     }
   }
 
+  // Versus: resolve a loss only after a short grace (covers near-simultaneous crashes)
+  if (mp.active && mp.graceTimer > 0) {
+    mp.graceTimer -= dt;
+    if (mp.graceTimer <= 0) { if (mp.rivalDead) resolveVersus(); else finishVersus('LOSE'); }
+  }
+
   if (state.phase === 'playing') {
+   // Versus start countdown freezes the sim so both cars launch together
+   if (state.mode === 'versus' && state.countdown > 0) {
+    state.countdown -= dt;
+    cdEl.classList.remove('hidden');
+    cdEl.textContent = state.countdown > 0.9 ? String(Math.ceil(state.countdown - 0.9)) : 'GO!';
+   } else {
+    if (state.mode === 'versus') cdEl.classList.add('hidden');
     state.time += dt;
     const input = getInput();
 
@@ -604,7 +827,7 @@ function animate() {
       if (dz > 8) continue;
       const cs = c.userData.size;
       if (Math.abs(c.position.x - player.position.x) < phw + cs.w * 0.425 && dz < phl + cs.l * 0.425) {
-        gameOver(); break;
+        crash(); break;
       }
     }
 
@@ -617,6 +840,18 @@ function animate() {
     // HUD
     scoreEl.textContent = Math.floor(state.score).toLocaleString();
     speedEl.textContent = Math.round(state.speed * 3.6);
+
+    // Versus per-frame networking + rival ghost
+    if (state.mode === 'versus') {
+      mp.sendTimer -= dt;
+      if (mp.sendTimer <= 0) {
+        mp.sendTimer = 0.05; // ~20 Hz
+        net.send({ t: 'state', x: +player.position.x.toFixed(2), dist: Math.round(state.dist), score: Math.floor(state.score) });
+      }
+      updateGhost();
+      updateVsHud();
+    }
+   } // end countdown gate
   }
 
   // Camera: showcase orbit in the menu, chase cam in game

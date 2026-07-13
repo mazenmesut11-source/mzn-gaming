@@ -172,6 +172,48 @@ html, body {
 .cam-msg { font-size: 14px; color: #ffd10a; min-height: 20px; }
 .copyright { font-size: 12px; opacity: .45; letter-spacing: 2px; margin-top: 6px; }
 
+/* ---------- Online versus lobby ---------- */
+.room-code {
+  font-size: 52px; font-weight: 900; letter-spacing: 12px; text-indent: 12px;
+  color: #ffd10a; text-shadow: 0 0 24px rgba(255,209,10,.7);
+  margin: 12px 0 4px;
+}
+#roomCodeBox { margin-top: 12px; }
+.join-row { display: flex; gap: 8px; }
+#codeInput {
+  flex: 1; text-align: center; text-transform: uppercase;
+  font-size: 26px; font-weight: 800; letter-spacing: 8px; text-indent: 8px;
+  padding: 10px; border-radius: 12px;
+  background: rgba(255,255,255,.08); color: #fff;
+  border: 2px solid rgba(255,255,255,.2); outline: none;
+}
+#codeInput:focus { border-color: #18c2ff; box-shadow: 0 0 16px rgba(24,194,255,.4); }
+.join-row .big-btn { width: auto; padding: 12px 26px; font-size: 16px; }
+
+/* ---------- Versus HUD ---------- */
+#vsHud {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 20; display: flex; align-items: center; gap: 16px;
+  padding: 8px 20px; border-radius: 14px;
+  background: rgba(8,6,20,.55); border: 1px solid rgba(255,255,255,.14);
+  backdrop-filter: blur(8px);
+}
+.vs-side { display: flex; flex-direction: column; align-items: flex-start; min-width: 92px; }
+.vs-side.right { align-items: flex-end; }
+.vs-name { font-size: 11px; letter-spacing: 3px; opacity: .65; }
+.vs-score { font-size: 26px; font-weight: 800; }
+.vs-side .vs-score { color: #2dff6e; }
+.vs-side.right .vs-score { color: #18c2ff; }
+.vs-mid { font-size: 15px; font-weight: 800; font-style: italic; opacity: .7; min-width: 64px; text-align: center; }
+
+/* ---------- Countdown ---------- */
+#countdown {
+  position: fixed; inset: 0; z-index: 40; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(90px, 22vw, 220px); font-weight: 900; font-style: italic;
+  color: #fff; text-shadow: 0 0 40px rgba(24,194,255,.9);
+}
+
 /* ---------- Game over ---------- */
 .crash-title {
   font-size: clamp(50px, 9vw, 90px); font-weight: 900; font-style: italic;

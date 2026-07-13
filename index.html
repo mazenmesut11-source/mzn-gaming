@@ -8,6 +8,8 @@
 <!-- MediaPipe Hands (hand tracking) -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+  <!-- PeerJS (WebRTC) for online versus rooms -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script type="importmap">
   { "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
@@ -79,9 +81,57 @@
       </div>
 
       <button id="playBtn" class="big-btn">START ENGINE</button>
+      <button id="onlineBtn" class="ghost-btn">🌐 PLAY ONLINE — VERSUS</button>
       <p id="camMsg" class="cam-msg"></p>
     </div>
     <p class="copyright">© 2026 MZN GAMING — All rights reserved</p>
+  </div>
+
+  <!-- ONLINE VERSUS LOBBY -->
+  <div id="online" class="overlay hidden">
+    <div class="menu-card">
+      <h1 class="logo" style="font-size:clamp(30px,5vw,48px)">VERSUS</h1>
+      <p class="tagline">Race a friend. Last one alive wins.</p>
+
+      <div class="menu-section">
+        <h3>CREATE A ROOM</h3>
+        <button id="createRoomBtn" class="big-btn">CREATE ROOM</button>
+        <div id="roomCodeBox" class="hidden">
+          <div class="room-code" id="roomCode">----</div>
+          <p class="hint">Share this code with your friend.<br/><span id="hostStatus">Waiting for player 2…</span></p>
+        </div>
+      </div>
+
+      <div class="menu-section">
+        <h3>OR JOIN A ROOM</h3>
+        <div class="join-row">
+          <input id="codeInput" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" />
+          <button id="joinRoomBtn" class="big-btn">JOIN</button>
+        </div>
+        <p id="joinStatus" class="hint"></p>
+      </div>
+
+      <button id="onlineBackBtn" class="ghost-btn">← BACK</button>
+    </div>
+  </div>
+
+  <!-- VERSUS HUD (top center) -->
+  <div id="vsHud" class="hidden">
+    <div class="vs-side"><span class="vs-name">YOU</span><span id="vsMe" class="vs-score">0</span></div>
+    <div class="vs-mid" id="vsGap">VS</div>
+    <div class="vs-side right"><span class="vs-name">RIVAL</span><span id="vsRival" class="vs-score">0</span></div>
+  </div>
+
+  <!-- Countdown -->
+  <div id="countdown" class="hidden"></div>
+
+  <!-- VERSUS RESULT -->
+  <div id="versusResult" class="overlay hidden">
+    <h1 id="vsResultTitle" class="crash-title">YOU WIN</h1>
+    <div class="final-score" id="vsResultScore">0</div>
+    <p id="vsResultSub" class="tagline"></p>
+    <button id="vsRematchBtn" class="big-btn">REMATCH</button>
+    <button id="vsMenuBtn" class="ghost-btn">MENU</button>
   </div>
 
   <!-- GAME OVER -->
