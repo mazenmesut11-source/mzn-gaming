@@ -315,12 +315,17 @@ export function buildTruck(color) {
 const TRAFFIC_COLORS = [0xc0c5cc, 0x2a3d66, 0x8c1f1f, 0x2e5e3a, 0x555a63, 0xe8e4da, 0x734b8c];
 
 export function randomTrafficCar() {
-  const r = Math.random();
-  const c = TRAFFIC_COLORS[Math.floor(Math.random() * TRAFFIC_COLORS.length)];
-  if (r < 0.28) return buildSedan(c);
-  if (r < 0.48) return buildSUV(c);
-  if (r < 0.63) return buildMuscle(c);
-  if (r < 0.76) return buildTaxi();
-  if (r < 0.88) return buildPolice();
-  return buildTruck(c);
+  return trafficCarFromSeed(Math.random(), Math.random());
+}
+
+// Deterministic builder for online versus: same (u, c) in → same car out,
+// so both players see the exact same vehicle.
+export function trafficCarFromSeed(u, c) {
+  const color = TRAFFIC_COLORS[Math.floor(c * TRAFFIC_COLORS.length) % TRAFFIC_COLORS.length];
+  if (u < 0.28) return buildSedan(color);
+  if (u < 0.48) return buildSUV(color);
+  if (u < 0.63) return buildMuscle(color);
+  if (u < 0.76) return buildTaxi();
+  if (u < 0.88) return buildPolice();
+  return buildTruck(color);
 }

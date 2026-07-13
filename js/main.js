@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { buildSupercar, randomTrafficCar } from './cars.js';
+import { buildSupercar, randomTrafficCar, trafficCarFromSeed } from './cars.js';
 import { HandControl } from './hand.js';
 import { NetPeer, makeRoomCode } from './net.js';
 
@@ -429,12 +429,15 @@ const cdEl = $('countdown'), vsHudEl = $('vsHud');
 const net = new NetPeer();
 const mp = {
   active: false,
+  seed: 1,
   rivalColor: '#18c2ff',
   ghost: null,
-  rival: { x: 0, dist: 0, score: 0, present: false },
+  rival: { x: 0, dist: 0, score: 0, speed: 0, age: 0, present: false },
   myDead: false, rivalDead: false, finished: false,
+  deathFx: 0,
   graceTimer: 0, sendTimer: 0,
   wantRematch: false, rivalRematch: false,
+  clockBase: 0, clockAge: 0, // guest: shared traffic clock = host's clock
 };
 
 net.onOpen = () => { net.send({ t: 'hello', color: playerColor }); };
@@ -449,18 +452,115 @@ net.onData = (m) => {
   if (!m || !m.t) return;
   if (m.t === 'hello') {
     mp.rivalColor = m.color || '#18c2ff';
-    if (!mp.active) beginVersus();
+    // The HOST owns the match seed and starts both sides.
+    if (net.isHost && !mp.active) {
+      const seed = 1 + Math.floor(Math.random() * 0x7fffffff);
+      net.send({ t: 'start', seed });
+      beginVersus(seed);
+    }
+  } else if (m.t === 'start') {
+    if (!mp.active) beginVersus(m.seed);
   } else if (m.t === 'state') {
-    mp.rival.x = m.x; mp.rival.dist = m.dist; mp.rival.score = m.score; mp.rival.present = true;
+    mp.rival.x = m.x; mp.rival.dist = m.dist; mp.rival.score = m.score;
+    mp.rival.speed = m.v || 0; mp.rival.age = 0; mp.rival.present = true;
+    // The HOST's clock is the authority for shared traffic positions:
+    // the guest pins its traffic clock to the freshest host timestamp.
+    if (!net.isHost && typeof m.mt === 'number') {
+      mp.clockBase = m.mt;
+      mp.clockAge = 0;
+    }
   } else if (m.t === 'dead') {
     mp.rivalDead = true; mp.rival.score = m.score; mp.rival.dist = m.dist;
+    mp.deathFx = 1.2; // crash animation on the ghost
     onRivalDead();
   } else if (m.t === 'rematch') {
     mp.rivalRematch = true;
-    if (mp.wantRematch) beginVersus();
-    else $('vsResultSub').textContent = 'Rival wants a rematch — press REMATCH!';
+    if (mp.wantRematch && net.isHost) {
+      const seed = 1 + Math.floor(Math.random() * 0x7fffffff);
+      net.send({ t: 'start', seed });
+      beginVersus(seed);
+    } else if (!mp.wantRematch) {
+      $('vsResultSub').textContent = 'Rival wants a rematch — press REMATCH!';
+    }
   }
 };
+
+/* ----- Shared deterministic traffic (versus): same seed + same math on both
+   sides = both players see the SAME cars in the SAME places. Each lane has one
+   constant flow speed, so same-lane cars keep their spacing forever (no AI
+   needed, and zero network traffic for cars). ----- */
+const VS_LANE_SPEED = [12, 17, 22, 27]; // m/s per lane (right slow → left fast)
+const VS_LANE_GAP = [60, 68, 76, 84];   // spawn spacing per lane (m)
+const vsPool = new Map();               // "lane:k" -> car mesh
+
+function hash01(a, b, c) { // deterministic across machines (integer math only)
+  let x = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(c | 0, 362437)) | 0;
+  x = (x ^ (x >>> 13)) | 0;
+  x = Math.imul(x, 1274126177);
+  x = (x ^ (x >>> 16)) >>> 0;
+  return x / 4294967296;
+}
+
+function clearVersusTraffic() {
+  for (const car of vsPool.values()) {
+    scene.remove(car);
+    const i = traffic.indexOf(car);
+    if (i >= 0) traffic.splice(i, 1);
+  }
+  vsPool.clear();
+}
+
+function updateVersusTraffic(dt) {
+  // Shared clock: host uses its own time; guest follows the host's timestamps.
+  mp.clockAge += dt;
+  const t = net.isHost || !mp.rival.present ? state.time : mp.clockBase + mp.clockAge;
+  const keep = new Set();
+  for (let L = 0; L < LANES.length; L++) {
+    const v = VS_LANE_SPEED[L], gap = VS_LANE_GAP[L];
+    // car k sits at road position: 60 + k*gap + jitter + v*t
+    const kMin = Math.max(0, Math.ceil((state.dist - 30 - 60 - v * t - 20) / gap));
+    const kMax = Math.floor((state.dist + 320 - 60 - v * t + 20) / gap);
+    for (let k = kMin; k <= kMax; k++) {
+      const jitter = (hash01(k, L * 31 + 7, mp.seed) - 0.5) * 34;
+      const rel = 60 + k * gap + jitter + v * t - state.dist;
+      if (rel < -30 || rel > 320) continue;
+      const key = L + ':' + k;
+      keep.add(key);
+      let car = vsPool.get(key);
+      if (!car) {
+        car = trafficCarFromSeed(hash01(k * 7 + 1, L, mp.seed), hash01(k * 13 + 5, L, mp.seed));
+        car.position.x = LANES[L];
+        car.userData.vsKey = key;
+        car.userData.passed = false;
+        scene.add(car);
+        traffic.push(car);
+        vsPool.set(key, car);
+      }
+      car.position.z = -rel; // ahead = negative z
+      if (car.userData.wheels) for (const w of car.userData.wheels) w.rotation.x -= v * dt * 2.5;
+      // near miss (same rules as solo)
+      if (!car.userData.passed && car.position.z > player.position.z + 2) {
+        car.userData.passed = true;
+        if (Math.abs(car.position.x - player.position.x) < 2.6) {
+          state.combo++;
+          state.comboTimer = 2.2;
+          state.score += 120 * state.combo;
+          comboEl.textContent = `NEAR MISS ×${state.combo}  +${120 * state.combo}`;
+          comboEl.classList.add('show');
+        }
+      }
+    }
+  }
+  // evict cars that left the window
+  for (let i = traffic.length - 1; i >= 0; i--) {
+    const c = traffic[i];
+    if (c.userData.vsKey && !keep.has(c.userData.vsKey)) {
+      vsPool.delete(c.userData.vsKey);
+      scene.remove(c);
+      traffic.splice(i, 1);
+    }
+  }
+}
 
 function buildGhost(color) {
   const g = buildSupercar(new THREE.Color(color).getHex());
@@ -481,12 +581,31 @@ function ensureGhost() {
   mp.ghost = buildGhost(mp.rivalColor);
   mp.ghost.visible = false;
 }
-function updateGhost() {
+function updateGhost(dt) {
   if (!mp.ghost) return;
-  mp.ghost.visible = mp.rival.present && !mp.rivalDead;
-  mp.ghost.position.x = mp.rival.x;
-  const gz = -(mp.rival.dist - state.dist);          // rival ahead → negative z (in front)
-  mp.ghost.position.z = Math.max(-55, Math.min(11, gz));
+  // crash FX: quick spin + fade, then hide
+  if (mp.rivalDead) {
+    if (mp.deathFx > 0) {
+      mp.deathFx -= dt;
+      mp.ghost.visible = true;
+      mp.ghost.rotation.y += dt * 10;
+      const f = Math.max(0, mp.deathFx / 1.2);
+      mp.ghost.traverse((o) => { if (o.isMesh) o.material.opacity = 0.5 * f; });
+    } else {
+      mp.ghost.visible = false;
+    }
+    return;
+  }
+  mp.ghost.visible = mp.rival.present;
+  if (!mp.rival.present) return;
+  // dead-reckoning between packets + smoothing = no vibration
+  mp.rival.age += dt;
+  const predictedDist = mp.rival.dist + mp.rival.speed * Math.min(mp.rival.age, 0.4);
+  const targetZ = Math.max(-55, Math.min(11, -(predictedDist - state.dist)));
+  const s = Math.min(1, dt * 10);
+  mp.ghost.position.x += (mp.rival.x - mp.ghost.position.x) * s;
+  mp.ghost.position.z += (targetZ - mp.ghost.position.z) * s;
+  mp.ghost.rotation.y = 0;
 }
 function updateVsHud() {
   $('vsMe').textContent = Math.floor(state.score).toLocaleString();
@@ -495,13 +614,15 @@ function updateVsHud() {
   $('vsGap').textContent = gap >= 0 ? '+' + gap + 'm' : gap + 'm';
 }
 
-function beginVersus() {
+function beginVersus(seed) {
   if (mp.active) return;
   mp.active = true;
+  mp.seed = seed || 1;
   mp.finished = false; mp.myDead = false; mp.rivalDead = false;
   mp.wantRematch = false; mp.rivalRematch = false;
-  mp.graceTimer = 0; mp.sendTimer = 0;
-  mp.rival = { x: 0, dist: 0, score: 0, present: false };
+  mp.graceTimer = 0; mp.sendTimer = 0; mp.deathFx = 0;
+  mp.clockBase = 0; mp.clockAge = 0;
+  mp.rival = { x: 0, dist: 0, score: 0, speed: 0, age: 0, present: false };
   ensureGhost();
   $('online').classList.add('hidden');
   $('versusResult').classList.add('hidden');
@@ -565,6 +686,7 @@ function finishVersus(result) {
 function cleanupVersus() {
   net.close();
   mp.active = false; mp.finished = false;
+  clearVersusTraffic();
   if (mp.ghost) { scene.remove(mp.ghost); mp.ghost = null; }
   vsHudEl.classList.add('hidden');
   cdEl.classList.add('hidden');
@@ -573,8 +695,12 @@ function cleanupVersus() {
 function startGame(mode = 'solo') {
   for (const t of traffic) scene.remove(t);
   traffic.length = 0;
+  vsPool.clear();
   spawnPlayer();
-  for (let n = 0, guard = 0; n < 10 && guard < 60; guard++) { if (spawnTraffic(-260, -40)) n++; }
+  // Versus traffic is deterministic/shared — only solo uses random spawns.
+  if (mode !== 'versus') {
+    for (let n = 0, guard = 0; n < 10 && guard < 60; guard++) { if (spawnTraffic(-260, -40)) n++; }
+  }
   Object.assign(state, {
     phase: 'playing', mode, speed: 16, dist: 0, score: 0,
     combo: 0, comboTimer: 0, time: 0, shake: 0,
@@ -794,6 +920,10 @@ function animate() {
       if (ch.position.z - CHUNK_LEN > 35) ch.position.z -= CHUNK_LEN * 2; // leapfrog ahead
     }
 
+    if (state.mode === 'versus') {
+      // Shared deterministic traffic — both players see the same cars.
+      updateVersusTraffic(dt);
+    } else {
     // Traffic AI: follow the car ahead in the lane, then speed back up to the
     // lane's flow speed once the road clears (no permanent slowdowns → no far-away
     // car packs leaving the road near the player empty).
@@ -840,6 +970,7 @@ function animate() {
     // More traffic as difficulty grows
     const wanted = Math.min(16, 10 + Math.floor(state.time / 18));
     for (let guard = 0; traffic.length < wanted && guard < 20; guard++) spawnTraffic(-300, -100);
+    }
 
     // Combo timeout
     if (state.comboTimer > 0) {
@@ -874,10 +1005,19 @@ function animate() {
       mp.sendTimer -= dt;
       if (mp.sendTimer <= 0) {
         mp.sendTimer = 0.05; // ~20 Hz
-        net.send({ t: 'state', x: +player.position.x.toFixed(2), dist: Math.round(state.dist), score: Math.floor(state.score) });
+        net.send({
+          t: 'state',
+          x: +player.position.x.toFixed(2),
+          dist: +state.dist.toFixed(1),
+          v: +state.speed.toFixed(1),
+          mt: +state.time.toFixed(3),
+          score: Math.floor(state.score),
+        });
       }
-      updateGhost();
+      updateGhost(dt);
       updateVsHud();
+      // liveness watchdog: rival packets stopped → treat as disconnect
+      if (mp.rival.present && mp.rival.age > 5 && !mp.finished) finishVersus('DISCONNECT');
     }
    } // end countdown gate
   }
