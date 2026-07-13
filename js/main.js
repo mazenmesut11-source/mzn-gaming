@@ -348,6 +348,24 @@ const keys = {};
 addEventListener('keydown', (e) => { keys[e.code] = true; });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 
+// Touch steering (mobile): hold LEFT half = left, RIGHT half = right, BOTH = brake.
+const touch = { steer: 0, brake: false };
+{
+  const gameCanvas = $('game');
+  gameCanvas.style.touchAction = 'none'; // don't scroll the page while steering
+  const readTouches = (e) => {
+    let left = false, right = false;
+    for (const t of e.touches) {
+      if (t.clientX < innerWidth / 2) left = true; else right = true;
+    }
+    touch.brake = left && right;
+    touch.steer = touch.brake ? 0 : left ? -1 : right ? 1 : 0;
+  };
+  for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+    gameCanvas.addEventListener(ev, (e) => { readTouches(e); }, { passive: true });
+  }
+}
+
 function getInput() {
   if (controlMode === 'hand' && hand.detected) {
     return { steer: hand.steering, brake: hand.brake };
@@ -355,7 +373,8 @@ function getInput() {
   let steer = 0;
   if (keys.ArrowLeft || keys.KeyA) steer -= 1;
   if (keys.ArrowRight || keys.KeyD) steer += 1;
-  const brake = !!(keys.ArrowDown || keys.KeyS || keys.Space);
+  if (steer === 0) steer = touch.steer;                                  // mobile
+  const brake = !!(keys.ArrowDown || keys.KeyS || keys.Space) || touch.brake;
   return { steer, brake };
 }
 
@@ -611,8 +630,11 @@ function setMode(m) {
   $('modeKeys').classList.toggle('sel', m === 'keys');
   $('controlHint').innerHTML = m === 'hand'
     ? 'Hold your hand up like a steering wheel — tilt it to steer.<br/>✊ Close your fist to BRAKE. 🖐 Open hand = full speed.'
-    : '⬅ ➡ or A / D to steer.<br/>⬇ / S / SPACE to brake.';
+    : '⬅ ➡ or A / D to steer. ⬇ / S / SPACE to brake.<br/>📱 Mobile: touch LEFT / RIGHT side of the screen — both = brake.';
 }
+
+// Phones/tablets default to touch controls (hand tracking is heavy on mobile)
+if (matchMedia('(pointer: coarse)').matches) setMode('keys');
 
 let camReady = false;
 $('playBtn').addEventListener('click', async () => {
@@ -647,6 +669,7 @@ $('onlineBtn').addEventListener('click', () => {
   $('joinStatus').textContent = '';
   $('hostStatus').textContent = 'Waiting for player 2…';
   $('codeInput').value = '';
+  setTimeout(() => $('codeInput').focus(), 50);
 });
 $('onlineBackBtn').addEventListener('click', () => {
   cleanupVersus();
@@ -672,6 +695,11 @@ $('joinRoomBtn').addEventListener('click', () => {
   net.join(code);
 });
 $('codeInput').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase(); });
+// Enter inside the code field = JOIN (and don't let the key reach the game controls)
+$('codeInput').addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); $('joinRoomBtn').click(); }
+});
 $('vsRematchBtn').addEventListener('click', () => {
   if (!net.conn || !net.conn.open) {  // rival gone → back to menu
     cleanupVersus();

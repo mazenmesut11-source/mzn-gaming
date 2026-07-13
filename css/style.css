@@ -60,6 +60,13 @@ html, body {
   gap: 18px; text-align: center;
   background: radial-gradient(ellipse at 50% 30%, rgba(30,30,70,.92), rgba(5,5,15,.97));
   backdrop-filter: blur(6px);
+  overflow-y: auto; /* small screens: the card scrolls instead of clipping buttons */
+  padding: 18px 10px;
+}
+.overlay .menu-card { margin: auto; } /* centered when it fits, scrollable when not */
+@media (max-width: 480px) {
+  .join-row { flex-direction: column; }
+  .join-row .big-btn { width: 100%; padding: 14px 0; }
 }
 /* Menu: transparent over the live 3D scene — card pinned left, the player's car
    is showcased on the right (orbiting camera), so color picks are visible live. */
